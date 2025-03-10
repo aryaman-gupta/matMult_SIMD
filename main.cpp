@@ -10,36 +10,68 @@
 
 typedef double real_t;
 
-// Matrix multiplication (NxN), stored in row-major 1D arrays:
-// element (i, j) at index i*N + j.
-// 'useParallel' toggles OpenMP usage for the outer loop(s).
+// An enum to specify our three modes
+enum class MulMode {
+    SERIAL,
+    OMP,
+    OMP_SIMD
+};
+
+// A single matMul function that behaves differently
+// depending on the mode (serial, parallel, parallel+SIMD).
 void matMul(const std::vector<real_t>& A,
             const std::vector<real_t>& B,
             std::vector<real_t>&       C,
             int N,
-            bool useParallel)
+            MulMode mode)
 {
-    if (useParallel) {
+    switch (mode) {
+    case MulMode::SERIAL:
+    {
+        // ---- Serial (no OpenMP) ----
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j) {
+                real_t sum = 0.0;
+                for (int k = 0; k < N; ++k) {
+                    sum += A[i*N + k] * B[k*N + j];
+                }
+                C[i*N + j] = sum;
+            }
+        }
+        break;
+    }
+    case MulMode::OMP:
+    {
+        // ---- OpenMP parallel on outer loops ----
         #pragma omp parallel for
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < N; ++j) {
-                real_t sum = 0;
+                real_t sum = 0.0;
                 for (int k = 0; k < N; ++k) {
                     sum += A[i*N + k] * B[k*N + j];
                 }
                 C[i*N + j] = sum;
             }
         }
-    } else {
+        break;
+    }
+    case MulMode::OMP_SIMD:
+    {
+        // ---- OpenMP parallel + SIMD on the inner loop ----
+        #pragma omp parallel for
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < N; ++j) {
-                real_t sum = 0;
+                real_t sum = 0.0;
+                // Vectorize the k-loop
+                #pragma omp simd reduction(+:sum)
                 for (int k = 0; k < N; ++k) {
                     sum += A[i*N + k] * B[k*N + j];
                 }
                 C[i*N + j] = sum;
             }
         }
+        break;
+    }
     }
 }
 
@@ -64,70 +96,98 @@ int main(int argc, char* argv[])
     std::mt19937 gen(rd());
     std::uniform_real_distribution<real_t> dist(0.0, 1.0);
 
+#ifdef _OPENMP
+    int numThreads = omp_get_max_threads();
+#else
+    int numThreads = 1;
+#endif
+
+    // We will measure times (ms) for each of the three modes
+    double totalTimeSerial    = 0.0;
+    double totalTimeOmp       = 0.0;
+    double totalTimeOmpSimd   = 0.0;
+
+    // Allocate matrices
     std::vector<real_t> A(N*N);
     std::vector<real_t> B(N*N);
-    std::vector<real_t> C_parallel(N*N, 0);
+    // We'll keep three separate result buffers for the three modes
     std::vector<real_t> C_serial(N*N, 0);
+    std::vector<real_t> C_omp(N*N, 0);
+    std::vector<real_t> C_ompSimd(N*N, 0);
 
-    // ------ WARM-UP LOOP (not timed) ------
-    std::cout << "Performing 10 warm-up iterations...\n";
+    // -------- Warm-up iterations (not timed) --------
+    std::cout << "Performing 10 warm-up iterations (all modes)...\n";
     for (int w = 0; w < 10; ++w) {
-        // Fill A and B with random values
+        // Randomize A and B each time
         for (int i = 0; i < N*N; ++i) {
             A[i] = dist(gen);
             B[i] = dist(gen);
         }
 
-        // Parallel multiply (no timing)
-        matMul(A, B, C_parallel, N, true);
-        // Serial multiply (no timing)
-        matMul(A, B, C_serial, N, false);
+        // Serial
+        matMul(A, B, C_serial, N, MulMode::SERIAL);
+        // OMP
+        matMul(A, B, C_omp, N, MulMode::OMP);
+        // OMP_SIMD
+        matMul(A, B, C_ompSimd, N, MulMode::OMP_SIMD);
 
-        // Compare results for correctness
+        // Quick correctness check among the three results
+        // (not strictly necessary in warm-up, but it's good to confirm).
         double maxDiff = 0.0;
         for (int i = 0; i < N*N; ++i) {
-            double diff = std::fabs(C_parallel[i] - C_serial[i]);
-            if (diff > maxDiff) maxDiff = diff;
+            double diff1 = std::fabs(C_serial[i] - C_omp[i]);
+            double diff2 = std::fabs(C_serial[i] - C_ompSimd[i]);
+            maxDiff = std::max({maxDiff, diff1, diff2});
         }
         if (maxDiff > 1e-10) {
-            std::cerr << "Warning (warm-up): Results differ (max diff = "
-                      << maxDiff << ") on warm-up iteration " << (w+1) << "!\n";
+            std::cerr << "Warm-up warning: max diff = " << maxDiff
+                      << " in iteration " << (w+1) << "\n";
         }
     }
     std::cout << "Warm-up complete.\n\n";
 
-    // ------ TIMED LOOP ------
-    double totalParallelTimeMs = 0.0;
-    double totalSerialTimeMs   = 0.0;
-
+    // -------- Timed iterations --------
     for (int r = 0; r < reps; ++r) {
-        // Fill A and B with random values
+        // Randomize A and B
         for (int i = 0; i < N*N; ++i) {
             A[i] = dist(gen);
             B[i] = dist(gen);
         }
 
-        // -- Parallel multiply (timed) --
-        auto startPar = std::chrono::steady_clock::now();
-        matMul(A, B, C_parallel, N, true);
-        auto endPar   = std::chrono::steady_clock::now();
-        double elapsedParMs =
-            std::chrono::duration<double,std::milli>(endPar - startPar).count();
-        totalParallelTimeMs += elapsedParMs;
+        // --- Serial ---
+        {
+            auto t1 = std::chrono::steady_clock::now();
+            matMul(A, B, C_serial, N, MulMode::SERIAL);
+            auto t2 = std::chrono::steady_clock::now();
+            double elapsedMs = std::chrono::duration<double,std::milli>(t2 - t1).count();
+            totalTimeSerial += elapsedMs;
+        }
 
-        // -- Serial multiply (timed) --
-        auto startSer = std::chrono::steady_clock::now();
-        matMul(A, B, C_serial, N, false);
-        auto endSer   = std::chrono::steady_clock::now();
-        double elapsedSerMs =
-            std::chrono::duration<double,std::milli>(endSer - startSer).count();
-        totalSerialTimeMs += elapsedSerMs;
+        // --- OMP ---
+        {
+            auto t1 = std::chrono::steady_clock::now();
+            matMul(A, B, C_omp, N, MulMode::OMP);
+            auto t2 = std::chrono::steady_clock::now();
+            double elapsedMs = std::chrono::duration<double,std::milli>(t2 - t1).count();
+            totalTimeOmp += elapsedMs;
+        }
 
-        // Compare results for correctness
+        // --- OMP + SIMD ---
+        {
+            auto t1 = std::chrono::steady_clock::now();
+            matMul(A, B, C_ompSimd, N, MulMode::OMP_SIMD);
+            auto t2 = std::chrono::steady_clock::now();
+            double elapsedMs = std::chrono::duration<double,std::milli>(t2 - t1).count();
+            totalTimeOmpSimd += elapsedMs;
+        }
+
+        // Compare all three results
         double maxDiff = 0.0;
         for (int i = 0; i < N*N; ++i) {
-            double diff = std::fabs(C_parallel[i] - C_serial[i]);
-            if (diff > maxDiff) maxDiff = diff;
+            double diff1 = std::fabs(C_serial[i] - C_omp[i]);
+            double diff2 = std::fabs(C_serial[i] - C_ompSimd[i]);
+            double diff3 = std::fabs(C_omp[i] - C_ompSimd[i]); // optional
+            maxDiff = std::max({maxDiff, diff1, diff2, diff3});
         }
         if (maxDiff > 1e-10) {
             std::cerr << "Warning: Results differ (max diff = "
@@ -135,18 +195,16 @@ int main(int argc, char* argv[])
         }
     }
 
-#ifdef _OPENMP
-    int numThreads = omp_get_max_threads();
-#else
-    int numThreads = 1;
-#endif
-
+    // Print summary
     std::cout << "========== Summary ==========\n";
-    std::cout << "Matrix size: "           << N          << "\n";
-    std::cout << "Repetitions (timed): "   << reps       << "\n";
-    std::cout << "OpenMP threads: "        << numThreads << "\n";
-    std::cout << "Total parallel time (ms):     " << totalParallelTimeMs << "\n";
-    std::cout << "Total non-parallel time (ms): " << totalSerialTimeMs   << "\n";
+    std::cout << "Matrix size: " << N << "\n";
+    std::cout << "Repetitions (timed): " << reps << "\n";
+    std::cout << "OpenMP threads: " << numThreads << "\n";
+
+    std::cout << "\nTotal times (ms) across all " << reps << " iterations:\n";
+    std::cout << "  Serial     : " << totalTimeSerial  << " ms\n";
+    std::cout << "  OMP        : " << totalTimeOmp     << " ms\n";
+    std::cout << "  OMP + SIMD : " << totalTimeOmpSimd << " ms\n";
     std::cout << "=============================\n";
 
     return 0;
