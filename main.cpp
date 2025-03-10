@@ -2,8 +2,8 @@
 #include <vector>
 #include <random>
 #include <cstdlib>   // for std::atoi
-#include <chrono>    // for timing
-#include <cmath>     // for std::fabs
+#include <chrono>
+#include <cmath>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -69,32 +69,19 @@ int main(int argc, char* argv[])
     std::vector<real_t> C_parallel(N*N, 0);
     std::vector<real_t> C_serial(N*N, 0);
 
-    // Track total times (in milliseconds)
-    double totalParallelTime = 0.0;
-    double totalSerialTime   = 0.0;
-
-    for (int r = 0; r < reps; ++r) {
+    // ------ WARM-UP LOOP (not timed) ------
+    std::cout << "Performing 10 warm-up iterations...\n";
+    for (int w = 0; w < 10; ++w) {
         // Fill A and B with random values
         for (int i = 0; i < N*N; ++i) {
             A[i] = dist(gen);
             B[i] = dist(gen);
         }
 
-        // --- Parallel multiply ---
-        auto startPar = std::chrono::steady_clock::now();
+        // Parallel multiply (no timing)
         matMul(A, B, C_parallel, N, true);
-        auto endPar   = std::chrono::steady_clock::now();
-        double elapsedParMs =
-            std::chrono::duration<double, std::milli>(endPar - startPar).count();
-        totalParallelTime += elapsedParMs;
-
-        // --- Serial multiply ---
-        auto startSer = std::chrono::steady_clock::now();
+        // Serial multiply (no timing)
         matMul(A, B, C_serial, N, false);
-        auto endSer   = std::chrono::steady_clock::now();
-        double elapsedSerMs =
-            std::chrono::duration<double, std::milli>(endSer - startSer).count();
-        totalSerialTime += elapsedSerMs;
 
         // Compare results for correctness
         double maxDiff = 0.0;
@@ -103,8 +90,48 @@ int main(int argc, char* argv[])
             if (diff > maxDiff) maxDiff = diff;
         }
         if (maxDiff > 1e-10) {
-            std::cerr << "Warning: Results differ (max diff = " << maxDiff
-                      << ") on repetition " << (r+1) << "!\n";
+            std::cerr << "Warning (warm-up): Results differ (max diff = "
+                      << maxDiff << ") on warm-up iteration " << (w+1) << "!\n";
+        }
+    }
+    std::cout << "Warm-up complete.\n\n";
+
+    // ------ TIMED LOOP ------
+    double totalParallelTimeMs = 0.0;
+    double totalSerialTimeMs   = 0.0;
+
+    for (int r = 0; r < reps; ++r) {
+        // Fill A and B with random values
+        for (int i = 0; i < N*N; ++i) {
+            A[i] = dist(gen);
+            B[i] = dist(gen);
+        }
+
+        // -- Parallel multiply (timed) --
+        auto startPar = std::chrono::steady_clock::now();
+        matMul(A, B, C_parallel, N, true);
+        auto endPar   = std::chrono::steady_clock::now();
+        double elapsedParMs =
+            std::chrono::duration<double,std::milli>(endPar - startPar).count();
+        totalParallelTimeMs += elapsedParMs;
+
+        // -- Serial multiply (timed) --
+        auto startSer = std::chrono::steady_clock::now();
+        matMul(A, B, C_serial, N, false);
+        auto endSer   = std::chrono::steady_clock::now();
+        double elapsedSerMs =
+            std::chrono::duration<double,std::milli>(endSer - startSer).count();
+        totalSerialTimeMs += elapsedSerMs;
+
+        // Compare results for correctness
+        double maxDiff = 0.0;
+        for (int i = 0; i < N*N; ++i) {
+            double diff = std::fabs(C_parallel[i] - C_serial[i]);
+            if (diff > maxDiff) maxDiff = diff;
+        }
+        if (maxDiff > 1e-10) {
+            std::cerr << "Warning: Results differ (max diff = "
+                      << maxDiff << ") on repetition " << (r+1) << "!\n";
         }
     }
 
@@ -114,13 +141,13 @@ int main(int argc, char* argv[])
     int numThreads = 1;
 #endif
 
-    std::cout << "\n========== Summary ==========\n";
-    std::cout << "Matrix size: "      << N    << "\n";
-    std::cout << "Repetitions: "      << reps << "\n";
-    std::cout << "OpenMP threads: "   << numThreads << "\n";
-    std::cout << "Total parallel time (ms):     " << totalParallelTime << "\n";
-    std::cout << "Total non-parallel time (ms): " << totalSerialTime   << "\n";
-    std::cout << "============================\n";
+    std::cout << "========== Summary ==========\n";
+    std::cout << "Matrix size: "           << N          << "\n";
+    std::cout << "Repetitions (timed): "   << reps       << "\n";
+    std::cout << "OpenMP threads: "        << numThreads << "\n";
+    std::cout << "Total parallel time (ms):     " << totalParallelTimeMs << "\n";
+    std::cout << "Total non-parallel time (ms): " << totalSerialTimeMs   << "\n";
+    std::cout << "=============================\n";
 
     return 0;
 }
