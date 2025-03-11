@@ -4,6 +4,7 @@
 #include <cstdlib>   // for std::atoi
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
