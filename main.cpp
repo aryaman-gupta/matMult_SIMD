@@ -15,6 +15,7 @@ typedef double real_t;
 enum class MulMode {
     SERIAL,
     OMP,
+    OMP_TRANSPOSED,
     OMP_SIMD
 };
 
@@ -42,52 +43,66 @@ void matMul(const std::vector<real_t>& A,
             MulMode mode)
 {
     switch (mode) {
-    case MulMode::SERIAL:
-    {
-        // ---- Serial (no OpenMP) ----
-        for (int i = 0; i < N; ++i) {
-            for (int j = 0; j < N; ++j) {
-                real_t sum = 0.0;
-                for (int k = 0; k < N; ++k) {
-                    sum += A[i*N + k] * B[k*N + j];
+        case MulMode::SERIAL:
+        {
+            // ---- Serial (no OpenMP) ----
+            for (int i = 0; i < N; ++i) {
+                for (int j = 0; j < N; ++j) {
+                    real_t sum = 0.0;
+                    for (int k = 0; k < N; ++k) {
+                        sum += A[i*N + k] * B[k*N + j];
+                    }
+                    C[i*N + j] = sum;
                 }
-                C[i*N + j] = sum;
             }
+            break;
         }
-        break;
-    }
-    case MulMode::OMP:
-    {
-        // ---- OpenMP parallel on outer loops ----
-        #pragma omp parallel for
-        for (int i = 0; i < N; ++i) {
-            for (int j = 0; j < N; ++j) {
-                real_t sum = 0.0;
-                for (int k = 0; k < N; ++k) {
-                    sum += A[i*N + k] * B[k*N + j];
+        case MulMode::OMP:
+        {
+            // ---- OpenMP parallel on outer loops ----
+            #pragma omp parallel for
+            for (int i = 0; i < N; ++i) {
+                for (int j = 0; j < N; ++j) {
+                    real_t sum = 0.0;
+                    for (int k = 0; k < N; ++k) {
+                        sum += A[i*N + k] * B[k*N + j];
+                    }
+                    C[i*N + j] = sum;
                 }
-                C[i*N + j] = sum;
             }
+            break;
         }
-        break;
-    }
-    case MulMode::OMP_SIMD:
-    {
-        // ---- OpenMP parallel + SIMD on the inner loop ----
-        #pragma omp parallel for
-        for (int i = 0; i < N; ++i) {
-            for (int j = 0; j < N; ++j) {
-                real_t sum = 0.0;
-                // Vectorize the k-loop
-                #pragma omp simd reduction(+:sum)
-                for (int k = 0; k < N; ++k) {
-                    sum += A[i*N + k] * Btrans[j*N + k];
+        case MulMode::OMP_TRANSPOSED:
+        {
+            #pragma omp parallel for
+            for (int i = 0; i < N; ++i) {
+                for (int j = 0; j < N; ++j) {
+                    real_t sum = 0.0;
+                    for (int k = 0; k < N; ++k) {
+                        sum += A[i*N + k] * Btrans[j*N + k];
+                    }
+                    C[i*N + j] = sum;
                 }
-                C[i*N + j] = sum;
             }
+            break;
         }
-        break;
-    }
+        case MulMode::OMP_SIMD:
+        {
+            // ---- OpenMP parallel + SIMD on the inner loop ----
+            #pragma omp parallel for
+            for (int i = 0; i < N; ++i) {
+                for (int j = 0; j < N; ++j) {
+                    real_t sum = 0.0;
+                    // Vectorize the k-loop
+                    #pragma omp simd reduction(+:sum)
+                    for (int k = 0; k < N; ++k) {
+                        sum += A[i*N + k] * Btrans[j*N + k];
+                    }
+                    C[i*N + j] = sum;
+                }
+            }
+            break;
+        }
     }
 }
 
@@ -121,6 +136,7 @@ int main(int argc, char* argv[])
     // We will measure times (ms) for each of the three modes
     double totalTimeSerial    = 0.0;
     double totalTimeOmp       = 0.0;
+    double totalTimeOmpTransposed = 0.0;
     double totalTimeOmpSimd   = 0.0;
 
     // Allocate matrices
@@ -130,6 +146,7 @@ int main(int argc, char* argv[])
     // We'll keep three separate result buffers for the three modes
     std::vector<real_t> C_serial(N*N, 0);
     std::vector<real_t> C_omp(N*N, 0);
+    std::vector<real_t> C_ompTransposed(N*N, 0);
     std::vector<real_t> C_ompSimd(N*N, 0);
 
     // -------- Warm-up iterations (not timed) --------
@@ -147,6 +164,8 @@ int main(int argc, char* argv[])
         matMul(A, B, Btrans, C_serial, N, MulMode::SERIAL);
         // OMP
         matMul(A, B, Btrans, C_omp, N, MulMode::OMP);
+        // OMP_TRANSPOSED
+        matMul(A, B, Btrans, C_ompTransposed, N, MulMode::OMP_TRANSPOSED);
         // OMP_SIMD
         matMul(A, B, Btrans, C_ompSimd, N, MulMode::OMP_SIMD);
 
@@ -156,7 +175,8 @@ int main(int argc, char* argv[])
         for (int i = 0; i < N*N; ++i) {
             double diff1 = std::fabs(C_serial[i] - C_omp[i]);
             double diff2 = std::fabs(C_serial[i] - C_ompSimd[i]);
-            maxDiff = std::max({maxDiff, diff1, diff2});
+            double diff3 = std::fabs(C_serial[i] - C_ompTransposed[i]);
+            maxDiff = std::max({maxDiff, diff1, diff2, diff3});
         }
         if (maxDiff > 1e-10) {
             std::cerr << "Warm-up warning: max diff = " << maxDiff
@@ -193,6 +213,15 @@ int main(int argc, char* argv[])
             totalTimeOmp += elapsedMs;
         }
 
+        // --- OMP Transposed ---
+        {
+            auto t1 = std::chrono::steady_clock::now();
+            matMul(A, B, Btrans, C_ompTransposed, N, MulMode::OMP_TRANSPOSED);
+            auto t2 = std::chrono::steady_clock::now();
+            double elapsedMs = std::chrono::duration<double,std::milli>(t2 - t1).count();
+            totalTimeOmpTransposed += elapsedMs;
+        }
+
         // --- OMP + SIMD ---
         {
             auto t1 = std::chrono::steady_clock::now();
@@ -207,7 +236,7 @@ int main(int argc, char* argv[])
         for (int i = 0; i < N*N; ++i) {
             double diff1 = std::fabs(C_serial[i] - C_omp[i]);
             double diff2 = std::fabs(C_serial[i] - C_ompSimd[i]);
-            double diff3 = std::fabs(C_omp[i] - C_ompSimd[i]); // optional
+            double diff3 = std::fabs(C_serial[i] - C_ompTransposed[i]);
             maxDiff = std::max({maxDiff, diff1, diff2, diff3});
         }
         if (maxDiff > 1e-10) {
@@ -225,6 +254,7 @@ int main(int argc, char* argv[])
     std::cout << "\nTotal times (ms) across all " << reps << " iterations:\n";
     std::cout << "  Serial     : " << totalTimeSerial  << " ms\n";
     std::cout << "  OMP        : " << totalTimeOmp     << " ms\n";
+    std::cout << "  OMP Transposed : " << totalTimeOmpTransposed << " ms\n";
     std::cout << "  OMP + SIMD : " << totalTimeOmpSimd << " ms\n";
     std::cout << "=============================\n";
 
