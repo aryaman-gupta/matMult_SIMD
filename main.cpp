@@ -17,10 +17,25 @@ enum class MulMode {
     OMP_SIMD
 };
 
+// Transpose a square matrix B (N x N), storing result in Btrans (N x N).
+// Both B and Btrans are in row-major 1D storage:
+//   B    (i,j) at index i*N + j
+//   Btrans(i,j) at index i*N + j   which is B(j,i)
+void transpose(const std::vector<real_t>& B,
+               std::vector<real_t>&       Btrans, int N)
+{
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            Btrans[j*N + i] = B[i*N + j];
+        }
+    }
+}
+
 // A single matMul function that behaves differently
 // depending on the mode (serial, parallel, parallel+SIMD).
 void matMul(const std::vector<real_t>& A,
             const std::vector<real_t>& B,
+            const std::vector<real_t>& Btrans,
             std::vector<real_t>&       C,
             int N,
             MulMode mode)
@@ -65,7 +80,7 @@ void matMul(const std::vector<real_t>& A,
                 // Vectorize the k-loop
                 #pragma omp simd reduction(+:sum)
                 for (int k = 0; k < N; ++k) {
-                    sum += A[i*N + k] * B[k*N + j];
+                    sum += A[i*N + k] * Btrans[j*N + k];
                 }
                 C[i*N + j] = sum;
             }
@@ -110,6 +125,7 @@ int main(int argc, char* argv[])
     // Allocate matrices
     std::vector<real_t> A(N*N);
     std::vector<real_t> B(N*N);
+    std::vector<real_t> Btrans(N*N);
     // We'll keep three separate result buffers for the three modes
     std::vector<real_t> C_serial(N*N, 0);
     std::vector<real_t> C_omp(N*N, 0);
@@ -124,12 +140,14 @@ int main(int argc, char* argv[])
             B[i] = dist(gen);
         }
 
+        transpose(B, Btrans, N);
+
         // Serial
-        matMul(A, B, C_serial, N, MulMode::SERIAL);
+        matMul(A, B, Btrans, C_serial, N, MulMode::SERIAL);
         // OMP
-        matMul(A, B, C_omp, N, MulMode::OMP);
+        matMul(A, B, Btrans, C_omp, N, MulMode::OMP);
         // OMP_SIMD
-        matMul(A, B, C_ompSimd, N, MulMode::OMP_SIMD);
+        matMul(A, B, Btrans, C_ompSimd, N, MulMode::OMP_SIMD);
 
         // Quick correctness check among the three results
         // (not strictly necessary in warm-up, but it's good to confirm).
@@ -154,10 +172,12 @@ int main(int argc, char* argv[])
             B[i] = dist(gen);
         }
 
+        transpose(B, Btrans, N);
+
         // --- Serial ---
         {
             auto t1 = std::chrono::steady_clock::now();
-            matMul(A, B, C_serial, N, MulMode::SERIAL);
+            matMul(A, B, Btrans, C_serial, N, MulMode::SERIAL);
             auto t2 = std::chrono::steady_clock::now();
             double elapsedMs = std::chrono::duration<double,std::milli>(t2 - t1).count();
             totalTimeSerial += elapsedMs;
@@ -166,7 +186,7 @@ int main(int argc, char* argv[])
         // --- OMP ---
         {
             auto t1 = std::chrono::steady_clock::now();
-            matMul(A, B, C_omp, N, MulMode::OMP);
+            matMul(A, B, Btrans, C_omp, N, MulMode::OMP);
             auto t2 = std::chrono::steady_clock::now();
             double elapsedMs = std::chrono::duration<double,std::milli>(t2 - t1).count();
             totalTimeOmp += elapsedMs;
@@ -175,7 +195,7 @@ int main(int argc, char* argv[])
         // --- OMP + SIMD ---
         {
             auto t1 = std::chrono::steady_clock::now();
-            matMul(A, B, C_ompSimd, N, MulMode::OMP_SIMD);
+            matMul(A, B, Btrans, C_ompSimd, N, MulMode::OMP_SIMD);
             auto t2 = std::chrono::steady_clock::now();
             double elapsedMs = std::chrono::duration<double,std::milli>(t2 - t1).count();
             totalTimeOmpSimd += elapsedMs;
