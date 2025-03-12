@@ -14,6 +14,7 @@ typedef double real_t;
 // An enum to specify our three modes
 enum class MulMode {
     SERIAL,
+    SERIAL_TRANSPOSED,
     OMP,
     OMP_TRANSPOSED,
     OMP_SIMD
@@ -51,6 +52,19 @@ void matMul(const std::vector<real_t>& A,
                     real_t sum = 0.0;
                     for (int k = 0; k < N; ++k) {
                         sum += A[i*N + k] * B[k*N + j];
+                    }
+                    C[i*N + j] = sum;
+                }
+            }
+            break;
+        }
+        case MulMode::SERIAL_TRANSPOSED:
+        {
+            for (int i = 0; i < N; ++i) {
+                for (int j = 0; j < N; ++j) {
+                    real_t sum = 0.0;
+                    for (int k = 0; k < N; ++k) {
+                        sum += A[i*N + k] * Btrans[j*N + k];
                     }
                     C[i*N + j] = sum;
                 }
@@ -135,6 +149,7 @@ int main(int argc, char* argv[])
 
     // We will measure times (ms) for each of the three modes
     double totalTimeSerial    = 0.0;
+    double totalTimeSerialTrans = 0.0;
     double totalTimeOmp       = 0.0;
     double totalTimeOmpTransposed = 0.0;
     double totalTimeOmpSimd   = 0.0;
@@ -145,6 +160,7 @@ int main(int argc, char* argv[])
     std::vector<real_t> Btrans(N*N);
     // We'll keep three separate result buffers for the three modes
     std::vector<real_t> C_serial(N*N, 0);
+    std::vector<real_t> C_serial_transposed(N*N, 0);
     std::vector<real_t> C_omp(N*N, 0);
     std::vector<real_t> C_ompTransposed(N*N, 0);
     std::vector<real_t> C_ompSimd(N*N, 0);
@@ -162,6 +178,8 @@ int main(int argc, char* argv[])
 
         // Serial
         matMul(A, B, Btrans, C_serial, N, MulMode::SERIAL);
+        // Serial Transposed
+        matMul(A, B, Btrans, C_serial_transposed, N, MulMode::SERIAL_TRANSPOSED);
         // OMP
         matMul(A, B, Btrans, C_omp, N, MulMode::OMP);
         // OMP_TRANSPOSED
@@ -176,7 +194,8 @@ int main(int argc, char* argv[])
             double diff1 = std::fabs(C_serial[i] - C_omp[i]);
             double diff2 = std::fabs(C_serial[i] - C_ompSimd[i]);
             double diff3 = std::fabs(C_serial[i] - C_ompTransposed[i]);
-            maxDiff = std::max({maxDiff, diff1, diff2, diff3});
+            double diff4 = std::fabs(C_serial[i] - C_serial_transposed[i]);
+            maxDiff = std::max({maxDiff, diff1, diff2, diff3, diff4});
         }
         if (maxDiff > 1e-10) {
             std::cerr << "Warm-up warning: max diff = " << maxDiff
@@ -202,6 +221,15 @@ int main(int argc, char* argv[])
             auto t2 = std::chrono::steady_clock::now();
             double elapsedMs = std::chrono::duration<double,std::milli>(t2 - t1).count();
             totalTimeSerial += elapsedMs;
+        }
+
+        // --- Serial Transposed ---
+        {
+            auto t1 = std::chrono::steady_clock::now();
+            matMul(A, B, Btrans, C_serial_transposed, N, MulMode::SERIAL_TRANSPOSED);
+            auto t2 = std::chrono::steady_clock::now();
+            double elapsedMs = std::chrono::duration<double,std::milli>(t2 - t1).count();
+            totalTimeSerialTrans += elapsedMs;
         }
 
         // --- OMP ---
@@ -237,7 +265,8 @@ int main(int argc, char* argv[])
             double diff1 = std::fabs(C_serial[i] - C_omp[i]);
             double diff2 = std::fabs(C_serial[i] - C_ompSimd[i]);
             double diff3 = std::fabs(C_serial[i] - C_ompTransposed[i]);
-            maxDiff = std::max({maxDiff, diff1, diff2, diff3});
+            double diff4 = std::fabs(C_serial[i] - C_serial_transposed[i]);
+            maxDiff = std::max({maxDiff, diff1, diff2, diff3, diff4});
         }
         if (maxDiff > 1e-10) {
             std::cerr << "Warning: Results differ (max diff = "
@@ -252,10 +281,11 @@ int main(int argc, char* argv[])
     std::cout << "OpenMP threads: " << numThreads << "\n";
 
     std::cout << "\nTotal times (ms) across all " << reps << " iterations:\n";
-    std::cout << "  Serial     : " << totalTimeSerial  << " ms\n";
-    std::cout << "  OMP        : " << totalTimeOmp     << " ms\n";
-    std::cout << "  OMP Transposed : " << totalTimeOmpTransposed << " ms\n";
-    std::cout << "  OMP + SIMD : " << totalTimeOmpSimd << " ms\n";
+    std::cout << "  Serial            : " << totalTimeSerial  << " ms\n";
+    std::cout << "  Serial Transposed : " << totalTimeSerialTrans << " ms\n";
+    std::cout << "  OMP               : " << totalTimeOmp     << " ms\n";
+    std::cout << "  OMP Transposed    : " << totalTimeOmpTransposed << " ms\n";
+    std::cout << "  OMP + SIMD        : " << totalTimeOmpSimd << " ms\n";
     std::cout << "=============================\n";
 
     return 0;
