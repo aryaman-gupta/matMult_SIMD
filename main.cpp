@@ -11,7 +11,6 @@
 
 typedef double real_t;
 
-// An enum to specify our three modes
 enum class MulMode {
     SERIAL,
     SERIAL_TRANSPOSED,
@@ -20,10 +19,6 @@ enum class MulMode {
     OMP_SIMD
 };
 
-// Transpose a square matrix B (N x N), storing result in Btrans (N x N).
-// Both B and Btrans are in row-major 1D storage:
-//   B    (i,j) at index i*N + j
-//   Btrans(i,j) at index i*N + j   which is B(j,i)
 void transpose(const std::vector<real_t>& B,
                std::vector<real_t>&       Btrans, int N)
 {
@@ -34,8 +29,6 @@ void transpose(const std::vector<real_t>& B,
     }
 }
 
-// A single matMul function that behaves differently
-// depending on the mode (serial, parallel, parallel+SIMD).
 void matMul(const std::vector<real_t>& A,
             const std::vector<real_t>& B,
             const std::vector<real_t>& Btrans,
@@ -147,7 +140,6 @@ int main(int argc, char* argv[])
     int numThreads = 1;
 #endif
 
-    // We will measure times (ms) for each of the three modes
     double totalTimeSerial    = 0.0;
     double totalTimeSerialTrans = 0.0;
     double totalTimeOmp       = 0.0;
@@ -158,7 +150,7 @@ int main(int argc, char* argv[])
     std::vector<real_t> A(N*N);
     std::vector<real_t> B(N*N);
     std::vector<real_t> Btrans(N*N);
-    // We'll keep three separate result buffers for the three modes
+    // Result matrices
     std::vector<real_t> C_serial(N*N, 0);
     std::vector<real_t> C_serial_transposed(N*N, 0);
     std::vector<real_t> C_omp(N*N, 0);
@@ -187,8 +179,7 @@ int main(int argc, char* argv[])
         // OMP_SIMD
         matMul(A, B, Btrans, C_ompSimd, N, MulMode::OMP_SIMD);
 
-        // Quick correctness check among the three results
-        // (not strictly necessary in warm-up, but it's good to confirm).
+        // correctness check
         double maxDiff = 0.0;
         for (int i = 0; i < N*N; ++i) {
             double diff1 = std::fabs(C_serial[i] - C_omp[i]);
@@ -274,7 +265,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    // Print summary
+    // Print results
     std::cout << "========== Summary ==========\n";
     std::cout << "Matrix size: " << N << "\n";
     std::cout << "Repetitions (timed): " << reps << "\n";
