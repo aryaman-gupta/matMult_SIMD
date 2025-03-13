@@ -3,7 +3,7 @@ project(MatrixMultiply)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 option(USE_O3 "Enable -O3 optimization" OFF)
 option(USE_AVX2 "Enable AVX2 instructions" OFF)
