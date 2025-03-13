@@ -271,12 +271,12 @@ int main(int argc, char* argv[])
     std::cout << "Repetitions (timed): " << reps << "\n";
     std::cout << "OpenMP threads: " << numThreads << "\n";
 
-    std::cout << "\nTotal times (ms) across all " << reps << " iterations:\n";
-    std::cout << "  Serial            : " << totalTimeSerial  << " ms\n";
-    std::cout << "  Serial Transposed : " << totalTimeSerialTrans << " ms\n";
-    std::cout << "  OMP               : " << totalTimeOmp     << " ms\n";
-    std::cout << "  OMP Transposed    : " << totalTimeOmpTransposed << " ms\n";
-    std::cout << "  OMP + SIMD        : " << totalTimeOmpSimd << " ms\n";
+    std::cout << "\nAverage time (ms)  per " << reps << " iteration:\n";
+    std::cout << "  Serial            : " << totalTimeSerial / reps  << " ms\n";
+    std::cout << "  Serial Transposed : " << totalTimeSerialTrans / reps << " ms\n";
+    std::cout << "  OMP               : " << totalTimeOmp / reps    << " ms\n";
+    std::cout << "  OMP Transposed    : " << totalTimeOmpTransposed / reps << " ms\n";
+    std::cout << "  OMP + SIMD        : " << totalTimeOmpSimd / reps << " ms\n";
     std::cout << "=============================\n";
 
     return 0;
